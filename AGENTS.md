@@ -1,17 +1,18 @@
-# AGENTS.md - GoWapp Supabase Bridge (Bun)
+# AGENTS.md - GoWapp Supabase Bridge
 
-This document provides guidelines for agentic coding agents working on the GoWapp Supabase Bridge - a Bun-based webhook bridge service.
+This document provides guidelines for agentic coding agents working on the GoWapp Supabase Bridge - a Node.js/TypeScript webhook bridge service.
 
 ## Project Overview
 
-This is a lightweight webhook bridge service built with Bun that receives incoming webhook events and processes them. It exposes a REST API endpoint for receiving events and returning appropriate responses.
+This is a lightweight webhook bridge service built with Node.js and TypeScript that receives incoming webhook events and processes them. It exposes a REST API endpoint for receiving events and returning appropriate responses.
 
 ## Build and Development Commands
 
 ### Core Commands
-- `bun run dev` - Start development server with hot reload
-- `bun run start` - Start production server
-- `bun test` - Run test suite (if tests exist)
+- `pnpm dev` - Start development server with hot reload (tsx watch)
+- `pnpm build` - Compile TypeScript to `dist/`
+- `pnpm start` - Run the compiled server (`node dist/index.js`)
+- `pnpm typecheck` - Type-check without emitting output
 
 ### Docker Commands
 ```bash
@@ -22,36 +23,29 @@ docker build -t webhook-bridge .
 docker run -d -p 5824:5824 webhook-bridge
 
 # Run with docker-compose
-docker-compose up --build
-```
-
-### Running Single Tests
-```bash
-# Run specific test file
-bun test path/to/test.test.ts
-
-# Run tests in watch mode
-bun test --watch
-
-# Run tests with coverage
-bun test --coverage
+docker compose up --build
 ```
 
 ## Project Structure
 
 ```
 ├── src/
-│   └── index.ts          # Main entry point and API handlers
+│   ├── index.ts          # HTTP server entry point and routing
+│   ├── get-devices.ts    # GoWhatsApp devices API client
+│   ├── domain/           # entities and repository interfaces
+│   ├── infra/            # Supabase + Dokploy implementations
+│   └── routes/           # webhook handlers
+├── dist/                 # compiled output (generated, gitignored)
 ├── Dockerfile            # Multi-stage Docker build
 ├── docker-compose.yml    # Docker Compose configuration
 ├── package.json          # Dependencies and scripts
-└── .dockerignore         # Docker build exclusions
+└── tsconfig.json         # TypeScript configuration
 ```
 
 ## Code Style Guidelines
 
 ### TypeScript & Types
-- Use TypeScript for all code
+- Use TypeScript for all code (`.ts`)
 - Define interfaces for request/response data structures
 - Use explicit return types for functions
 
@@ -67,19 +61,10 @@ interface WebhookResponse {
 ```
 
 ### Imports
-- Use relative imports for local modules
+- Use relative imports for local modules (no file extension)
 - Group imports logically (built-ins, third-party, internal)
 
-```typescript
-import type { WebhookEvent } from "./types";
-
-const server = Bun.serve({
-  port: 5824,
-  fetch(request) {
-    // handler
-  },
-});
-```
+The project compiles to CommonJS, so extensionless relative imports are correct.
 
 ### Naming Conventions
 - Functions: camelCase (e.g., `handleWebhook`, `parseRequest`)
@@ -87,126 +72,50 @@ const server = Bun.serve({
 - Constants: UPPER_SNAKE_CASE
 - File names: kebab-case or descriptive English
 
-```typescript
-const DEFAULT_PORT = 5824;
-
-function parseRequestBody(request: Request): Promise<WebhookEvent> {
-  return request.json();
-}
-```
-
 ### Server Configuration
-- Use `Bun.serve()` for HTTP server
+- Use `Hono` for routing, served on Node via `@hono/node-server`
 - Configure port via environment variable with fallback
-- Return appropriate status codes
+- Handlers return a standard `Response`
 
-```typescript
-const server = Bun.serve({
-  port: parseInt(process.env.PORT || "5824"),
-  fetch(request) {
-    // Handle routes
-  },
-});
-```
 
 ### Error Handling
 - Return 200 for successful webhook acknowledgments
 - Return appropriate error codes (400, 404, 500) for errors
 - Log errors for debugging
 
-```typescript
-if (!pathMatch) {
-  return new Response("Not Found", { status: 404 });
-}
-
-try {
-  const event = await request.json();
-  // Process event
-} catch (error) {
-  console.error("Error processing webhook:", error);
-  return new Response("Bad Request", { status: 400 });
-}
-
-return new Response(null, { status: 200 });
-```
 
 ### API Endpoint Patterns
-- Use route parameters for dynamic segments: `/webhook/{business_id}`
-- Match HTTP methods explicitly (GET, POST, etc.)
+- Use route parameters for dynamic segments: `/webhook/:businessId`
+- Register routes per HTTP method (`app.post`, `app.get`, ...)
 - Return JSON or null responses as appropriate
 
-```typescript
-const pathMatch = url.pathname.match(/^\/webhook\/([^/]+)$/);
-
-if (pathMatch && request.method === "POST") {
-  const business_id = pathMatch[1];
-  // Process webhook
-  return new Response(null, { status: 200 });
-}
-```
 
 ## Docker Guidelines
 
 ### Dockerfile Structure
 - Use multi-stage builds for smaller images
-- Use official Bun base images
+- Use official Node.js base images
+- Install pnpm via `corepack enable`
 - Copy only necessary files
 - Expose the configured port
 
-```dockerfile
-FROM oven/bun:1.3.2-debian AS builder
-
-WORKDIR /app
-COPY package.json ./
-RUN bun install --frozen-lockfile
-COPY src/ ./src/
-
-FROM oven/bun:1.3.2-debian
-
-WORKDIR /app
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/src ./src
-COPY package.json ./
-
-EXPOSE 5824
-
-CMD ["bun", "run", "src/index.ts"]
-```
-
-### Docker Compose
-- Use version "3.8" for compose file format
-- Configure restart policy
-- Map ports appropriately
-
-```yaml
-version: "3.8"
-
-services:
-  webhook-bridge:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      - "5824:5824"
-    restart: unless-stopped
-```
 
 ## Environment Variables
 
 - `PORT` - Server port (default: 5824)
+- `SUPABASE_URL` - Supabase project URL
+- `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key
+- `GOWAPP_HOST_URL` - Host where the GoWhatsApp containers are exposed; per-business paths (`/api/user/{business_id}/...`) are appended to it
+- `GOWAPP_SUPABASE_BRIDGE_URL` - Public URL of this bridge
+- `GOWAPP_BASIC_AUTH` - GoWhatsApp basic-auth credentials as `user:password`
+- `DOKPLOY_SERVER_URL` - Dokploy server URL
+- `DOKPLOY_API_KEY` - Dokploy API key
+
+Locally these are read from `.env` (loaded via `--env-file-if-exists=.env` in the `dev`/`start` scripts). In Docker they are injected via Compose.
 
 ## Dependencies
 
-- Bun runtime (v1.3.2)
-- No external npm dependencies required for base functionality
-
-## Development Notes
-
-- This is a minimal Bun server for webhook reception
-- The webhook endpoint returns 200 OK immediately after logging the event
-- For production, consider adding:
-  - Request validation
-  - Authentication/verification
-  - Async event processing
-  - Database integration
-  - Proper error responses
+- Node.js (>= 20)
+- pnpm (see `packageManager` in `package.json`)
+- Development: `typescript`, `tsx`, `@types/node`
+- Runtime: `@supabase/supabase-js`, `hono`, `@hono/node-server`

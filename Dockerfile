@@ -1,20 +1,30 @@
-FROM oven/bun:1.3.2-debian AS builder
+FROM node:22-slim AS builder
 
 WORKDIR /app
 
-COPY package.json ./
-RUN bun install --frozen-lockfile
+RUN corepack enable
 
-COPY src/ ./src/
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 
-FROM oven/bun:1.3.2-debian
+COPY tsconfig.json tsconfig.build.json ./
+COPY src ./src
+
+RUN pnpm build
+
+FROM node:22-slim AS runner
 
 WORKDIR /app
 
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/src ./src
-COPY package.json ./
+ENV NODE_ENV=production
+
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile --prod
+
+COPY --from=builder /app/dist ./dist
 
 EXPOSE 5824
 
-CMD ["bun", "run", "src/index.ts"]
+CMD ["node", "dist/index.js"]

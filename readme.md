@@ -1,4 +1,4 @@
-# Gowap supabase bridge bun
+# Gowap Supabase Bridge
 
 Connects gowapp to supabase
 
